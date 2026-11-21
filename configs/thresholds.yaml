@@ -1,0 +1,16 @@
+data_contract:
+  unseen_code_rate:      # share of a tenant's claims with codes not in the training vocabulary
+    warn: 0.005
+    fail: 0.02
+  psi_icd_chapter:       # population stability index, current window vs training window
+    warn: 0.10
+    fail: 0.25
+  max_null_rate: 0.001
+
+canary:
+  parity_max_abs_diff: 1.0e-6   # online vs offline score on the golden set
+  max_error_rate: 0.01
+  max_p95_latency_ms: 50
+  flagged_rate_delta_pts:
+    warn: 3
+    fail: 8
