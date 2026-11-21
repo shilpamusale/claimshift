@@ -1,0 +1,10 @@
+app_name: claimshift
+master: local[4]
+driver_memory: 4g
+shuffle_partitions: 16
+event_log_dir: spark-events   # Spark event logs; Step 3 reads task timings from here
+
+conf:
+  spark.sql.session.timeZone: UTC
+  spark.ui.showConsoleProgress: "false"
+  spark.sql.sources.partitionColumnTypeInference.enabled: "false"   # keep service_month as "2026-10"

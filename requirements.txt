@@ -1,5 +1,5 @@
 numpy>=1.26
-pandas>=2.1
+pandas>=2.1,<3        # PySpark does not fully support pandas 3 yet
 pyarrow>=15
 pyyaml>=6
 pyspark>=3.5,<5
