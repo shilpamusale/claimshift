@@ -1,8 +1,10 @@
 """Pipeline entry point.
 
     python -m pipeline.run_pipeline contract --eval-month 2026-10
+    python -m pipeline.run_pipeline features
+    python -m pipeline.run_pipeline skew-bench --month 2026-10
 
-Exit codes: 0 proceed, 2 retrain (drift), 3 block (data quality).
+Contract exit codes: 0 proceed, 2 retrain (drift), 3 block (data quality).
 """
 
 from __future__ import annotations
@@ -15,8 +17,10 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from pipeline.contracts import run_contract
+from pipeline.contracts import load_claims, run_contract
+from pipeline.features import build_features
 from pipeline.session import ROOT, get_spark
+from pipeline.skew_bench import print_summary, run_skew_bench
 
 EXIT_CODES = {"proceed": 0, "retrain": 2, "block": 3}
 
@@ -65,6 +69,28 @@ def cmd_contract(args: argparse.Namespace) -> int:
     return EXIT_CODES[report["action"]]
 
 
+def cmd_features(args: argparse.Namespace) -> int:
+    have = sorted(available_months(args.data))
+    months = args.months or have[1:]  # the first month has no labeled history
+    spark = get_spark()
+    rows = build_features(spark, load_claims(spark, args.data), months, args.data / "features")
+    for month, n in rows.items():
+        print(f"{month}: {n:>9,} feature rows")
+    print(f"features: {args.data / 'features'}")
+    return 0
+
+
+def cmd_skew_bench(args: argparse.Namespace) -> int:
+    spark = get_spark()
+    result = run_skew_bench(spark, load_claims(spark, args.data), args.month, ROOT / "spark-events", args.repeats)
+    print_summary(result["variants"])
+    out = ROOT / "docs" / "results" / "skew_bench.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(result, indent=2))
+    print(f"results: {out}")
+    return 0
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="command", required=True)
@@ -75,6 +101,17 @@ def main() -> None:
     c.add_argument("--data", type=Path, default=ROOT / "data")
     c.add_argument("--thresholds", type=Path, default=ROOT / "configs" / "thresholds.yaml")
     c.set_defaults(func=cmd_contract)
+
+    f = sub.add_parser("features", help="build as-of features for each month")
+    f.add_argument("--months", nargs="*", help="YYYY-MM ...; default: every month after the first")
+    f.add_argument("--data", type=Path, default=ROOT / "data")
+    f.set_defaults(func=cmd_features)
+
+    b = sub.add_parser("skew-bench", help="incident 2: compare fixes for the skewed tenant join")
+    b.add_argument("--month", default="2026-10")
+    b.add_argument("--repeats", type=int, default=3)
+    b.add_argument("--data", type=Path, default=ROOT / "data")
+    b.set_defaults(func=cmd_skew_bench)
 
     args = ap.parse_args()
     sys.exit(args.func(args))

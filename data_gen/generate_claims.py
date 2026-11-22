@@ -225,7 +225,8 @@ def main() -> None:
         part = claims_dir / f"service_month={month.strftime('%Y-%m')}"
         part.mkdir(parents=True, exist_ok=True)
         table = pa.Table.from_pandas(df.drop(columns="_is_new_code"), preserve_index=False)
-        pq.write_table(table, part / "part-00000.parquet", compression="snappy")
+        # 100k-row groups let Spark read a month with several tasks in parallel
+        pq.write_table(table, part / "part-00000.parquet", compression="snappy", row_group_size=100_000)
         print(f"{month:%Y-%m}: {n:>9,} rows  denial={stats['months'][month.strftime('%Y-%m')]['denial_rate']:.3f}")
 
     share = tenant_counts / tenant_counts.sum()

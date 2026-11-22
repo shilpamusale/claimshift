@@ -15,7 +15,7 @@ This repo simulates that day end to end on a laptop and works through the three 
 | # | Incident | Where it happens | How it's detected | Fix |
 |---|---|---|---|---|
 | 1 | **Unseen codes after Oct 1.** The model maps new codes to "unknown" and scores degrade silently. | Data / model | Data contract in the Spark pipeline: unseen-code rate per tenant, PSI on ICD chapter mix | Hierarchical backoff (code → category → chapter), then a retrain triggered by the drift alert |
-| 2 | **Retraining stalls on skew.** Three "whale" health systems hold most of the claim volume, so one Spark task runs far longer than the rest. | Distributed data pipeline | Spark UI / event log: max vs median task time, shuffle partition sizes | Adaptive Query Execution skew-join handling, plus key salting for two-phase aggregation |
+| 2 | **Retraining stalls on skew.** Three "whale" health systems hold most of the claim volume, so one Spark task runs far longer than the rest. | Distributed data pipeline | Spark event log: rows and run time per task in the join stage | Broadcast the small side (hint); salting when it's too big to broadcast. AQE alone did **not** fix it |
 | 3 | **Silent canary failure.** The retrained v2 server builds its feature vector in the wrong column order. No errors, normal latency, wrong scores. | Kubernetes serving | Canary analysis job: online-vs-offline score parity on a golden set, plus error and latency guardrails | Automatic rollback by Argo Rollouts; serving now validates features by name against the model's manifest |
 
 ---
@@ -30,7 +30,7 @@ This repo simulates that day end to end on a laptop and works through the three 
 |---|---|---|
 | Data generator | **Real ICD-10-CM codes** from the CMS FY2026 and FY2027 files, including the actual Oct 1 changes (190 new, 30 deleted). 50 tenants with Zipf-distributed volume (top 3 ≈ 57% of claims), including two women's-and-children's tenants where the obstetric changes land; 8 payers; Jul–Dec claims. Denial labels come from payer rules, including **payer edit lag**: payers deny more of the new codes in October. | Python, PyArrow |
 | Data contract | Checks schema and nulls, unseen-code rate per tenant, and PSI on ICD chapter distribution. Writes `drift_report.json`; a breach triggers a retrain. | PySpark |
-| Feature build | Claim-level features plus trailing tenant×code and payer×code denial rates, computed **as-of the prior month** so training never sees the future. These joins on skewed keys are where incident 2 lives. | PySpark |
+| Feature build | Claim-level features; code denial rates smoothed up the ICD hierarchy (code → category → chapter, the incident 1 fix); payer and payer×code rates; a tenant profile. Everything is computed **as of the month start** from labels already received, so training never sees the future. The tenant join is where incident 2 lives. | PySpark |
 | Training | Gradient-boosted classifier. Every model ships with a **feature manifest** (ordered names and types) and **golden-set scores** (offline predictions on 2,000 fixed claims). | scikit-learn `HistGradientBoostingClassifier`, MLflow |
 | Serving | `/predict`, `/health`, `/metrics`. The readiness probe waits for the model to load. | FastAPI, Docker |
 | Rollout | Canary at 25% → 50% → 100%, with an analysis step before each increase. Replica-based weights (4 replicas) keep it light on a laptop. | kind, Argo Rollouts |
@@ -80,11 +80,21 @@ The chapter PSI stays flat because the new codes stay in the same chapters. A co
 
 **Incident 2: Spark skew** (5M rows)
 
-| Run | Feature stage time | Max / median task time | Max / median shuffle partition |
-|---|---|---|---|
-| Baseline (AQE off, reproduces the pre-Spark-3.2 default) | _tbd_ | _tbd_ | _tbd_ |
-| AQE skew join | _tbd_ | _tbd_ | _tbd_ |
-| AQE + salting | _tbd_ | _tbd_ | _tbd_ |
+Same October feature build, five ways (`make skew-bench`, median of 3 runs; `docs/results/skew_bench.json`). The join stage is the one where October's 842k claims meet the tenant profile.
+
+| Run | Tenant join | Tasks | Biggest task (rows) | Max / median task ms | Wall s |
+|---|---|---|---|---|---|
+| Baseline (AQE off) | Sort-merge | 16 | **290,320 (34.5%)** — tenant T01 | 140 / 21 | 1.74 |
+| AQE on (Spark default) | Sort-merge | 5 | **290,320 (34.5%)** — unchanged | 141 / 124 | 1.33 |
+| AQE, skew split tuned for laptop | Sort-merge | 12 | **290,320 (34.5%)** — not split | 138 / 33 | 1.58 |
+| **Broadcast hint** | Broadcast | 4 | no shuffle; tasks = file splits | 221 / 185 | **1.21 (−30%)** |
+| **Salting, 16 buckets** | Sort-merge | 16 | **102,330 (12.1%)** | 77 / 33 | 1.51 (−13%) |
+
+What the event log showed:
+- **One task processed 34.5% of October's rows** and ran 6.7× longer than the median task (140 ms vs 21 ms): the whale tenant T01 hashed to a single partition.
+- **AQE didn't fix it.** It merged the small partitions (16 → 5), which made max/median ratios look better while the straggler stayed the same size. It couldn't broadcast, because the partially aggregated tenant table was 13 MB, over the 10 MB limit. And it couldn't split the skewed partition, because an aggregate sits between the shuffle and the join; AQE's skew split needs both sides to be raw shuffles.
+- **Fix:** broadcast the tenant profile explicitly (now the default in `features.py`). When the small side is too big to broadcast, salting cuts the straggler from 290k to 102k rows (2.8×) and its run time from 140 to 77 ms. A test proves all three join strategies produce identical features.
+- At 5M rows the wall-time gains are modest (13–30%) and noisy. The straggler share is the stable signal, and it grows with data.
 
 **Incident 3: silent canary**
 
@@ -103,7 +113,8 @@ The chapter PSI stays flat because the new codes stay in the same chapters. A co
 make setup          # venv + dependencies
 make data           # generate claims (ROWS=5000000; use ROWS=500000 for a quick run)
 make contract-demo  # data contract: Sep passes, Oct triggers a retrain
-make skew-bench     # incident 2: baseline vs AQE vs salting
+make features       # as-of features for Aug–Dec -> data/features/
+make skew-bench     # incident 2: baseline vs AQE vs broadcast vs salting
 make train          # trains a model, logs it to MLflow with manifest + golden scores
 make cluster        # creates the kind cluster and installs Argo Rollouts
 make deploy-v1      # stable baseline
@@ -128,6 +139,7 @@ claimshift/
 ├── serving/            app.py, features.py, Dockerfile
 ├── k8s/                kind-config.yaml, services.yaml
 ├── rollout/            rollout.yaml, analysis-template.yaml, canary_check.py
+├── docs/results/       benchmark outputs committed as evidence (skew_bench.json)
 ├── docs/incidents/     INC-01-unseen-codes.md, INC-02-spark-skew.md, INC-03-silent-canary.md
 ├── tests/              unit tests + serving/offline parity test
 ├── .github/workflows/  ci.yml (lint, tests, 100k-row pipeline run, parity test)
@@ -150,7 +162,7 @@ claimshift/
 
 ## What changes at 100× scale
 
-- **Skew gets worse, not better.** Whale tenants grow faster than the long tail. Salting factors and AQE thresholds need tuning per job, not once.
+- **Skew gets worse, not better.** Whale tenants grow faster than the long tail. Check the physical plan, not just the AQE setting: AQE can merge partitions without fixing a straggler. Salting factors need tuning per job, not once.
 - **Drift checks become a fan-out.** Per-tenant contracts across hundreds of tenants should run as one grouped Spark job, not one job per tenant.
 - **The canary needs traffic shaping.** Replica-based weights are coarse; real routing needs ALB or mesh weights. The golden-set parity check still works unchanged.
 - **Model load time matters.** Readiness probes, a PodDisruptionBudget, and a HorizontalPodAutoscaler on RPS keep rollouts from dropping capacity.
@@ -160,4 +172,5 @@ claimshift/
 - ICD-10-CM codes and the Oct 1 changes are the official CMS FY2026/FY2027 files. Claims, volumes and denials are simulated (real claims are PHI), and codes touched by the update are oversampled so the effect is visible at laptop scale.
 - A single-node cluster can't show node failures or network partitions.
 - Timings come from a laptop and show relative improvement, not production throughput.
+
 

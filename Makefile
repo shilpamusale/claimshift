@@ -4,7 +4,7 @@ ROWS ?= 5000000
 SEED ?= 7
 MONTH ?= 2026-10
 
-.PHONY: setup data data-small contract contract-demo test lint clean
+.PHONY: setup data data-small contract contract-demo features skew-bench test lint clean
 
 setup:
 	$(PYTHON) -m venv .venv
@@ -23,6 +23,12 @@ contract:                ## data contract for one month; exit 2 = retrain, 3 = b
 contract-demo:           ## September passes, October triggers a retrain
 	$(PY) -m pipeline.run_pipeline contract --eval-month 2026-09
 	-$(PY) -m pipeline.run_pipeline contract --eval-month 2026-10
+
+features:                ## as-of features for every month after the first
+	$(PY) -m pipeline.run_pipeline features
+
+skew-bench:              ## incident 2: baseline vs AQE vs broadcast vs salting
+	$(PY) -m pipeline.run_pipeline skew-bench --month $(MONTH)
 
 test:
 	$(PY) -m pytest -q
