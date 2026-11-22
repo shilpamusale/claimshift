@@ -1,0 +1,37 @@
+# The canary check, run as a Kubernetes Job at each analysis step.
+# Job succeeds -> the step passes. Job fails -> the AnalysisRun fails and Argo aborts
+# the rollout (failureLimit: 0 means one failure is enough).
+# canary-hash comes from the Rollout: the check only accepts answers from those pods.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: canary-check
+spec:
+  args:
+    - name: canary-hash
+  metrics:
+    - name: golden-set-parity
+      count: 1
+      failureLimit: 0
+      provider:
+        job:
+          spec:
+            backoffLimit: 0
+            activeDeadlineSeconds: 180
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: canary-check
+                    image: claimshift-scorer:v1    # any scorer image has the check script
+                    imagePullPolicy: Never
+                    command:
+                      - python
+                      - -m
+                      - rollout.canary_check
+                      - --canary
+                      - http://denial-scorer-canary:8080
+                      - --stable
+                      - http://denial-scorer-stable:8080
+                      - --canary-hash
+                      - "{{args.canary-hash}}"

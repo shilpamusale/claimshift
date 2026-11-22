@@ -16,7 +16,7 @@ This repo simulates that day end to end on a laptop and works through the three 
 |---|---|---|---|---|
 | 1 | **Unseen codes after Oct 1.** The model maps new codes to "unknown" and scores degrade silently. | Data / model | Data contract in the Spark pipeline: unseen-code rate per tenant, PSI on ICD chapter mix | Hierarchical backoff (code → category → chapter), then a retrain triggered by the drift alert |
 | 2 | **Retraining stalls on skew.** Three "whale" health systems hold most of the claim volume, so one Spark task runs far longer than the rest. | Distributed data pipeline | Spark event log: rows and run time per task in the join stage | Broadcast the small side (hint); salting when it's too big to broadcast. AQE alone did **not** fix it |
-| 3 | **Silent canary failure.** The retrained v2 server builds its feature vector in the wrong column order. No errors, normal latency, wrong scores. | Kubernetes serving | Canary analysis job: online-vs-offline score parity on a golden set, plus error and latency guardrails | Automatic rollback by Argo Rollouts; serving now validates features by name against the model's manifest |
+| 3 | **Silent canary failure.** The v2 serving build uses a hand-maintained feature list with two rate features swapped. No errors, normal latency, an average score that barely moves, and individual claims mis-scored by up to 0.11. | Kubernetes serving | Canary analysis job: online-vs-offline score parity on a golden set, plus error and latency guardrails | Automatic rollback by Argo Rollouts; serving now validates features by name against the model's manifest |
 
 ---
 
@@ -32,7 +32,7 @@ This repo simulates that day end to end on a laptop and works through the three 
 | Data contract | Checks schema and nulls, unseen-code rate per tenant, and PSI on ICD chapter distribution. Writes `drift_report.json`; a breach triggers a retrain. | PySpark |
 | Feature build | Claim-level features; code denial rates smoothed up the ICD hierarchy (code → category → chapter, the incident 1 fix); payer and payer×code rates; a tenant profile. Everything is computed **as of the month start** from labels already received, so training never sees the future. The tenant join is where incident 2 lives. | PySpark |
 | Training | Gradient-boosted classifier trained on **point-in-time labels** (only denials known by the training date). Every model ships as a bundle: the model, a **feature manifest** (ordered names and categorical encodings) and **golden-set scores** (offline predictions on 2,000 fixed claims). MLflow records every run; v1 and v2 are registered as `champion` and `challenger`. | scikit-learn `HistGradientBoostingClassifier`, MLflow (SQLite) |
-| Serving | `/predict`, `/health`, `/metrics`. The readiness probe waits for the model to load. | FastAPI, Docker |
+| Serving | `/predict`, `/health`, `/ready`, `/model-info`, `/golden`, `/metrics`. The readiness probe waits for the model to load, and the server refuses to start if its scikit-learn version differs from training. `FEATURE_ORDER=hardcoded` reproduces the incident 3 bug. | FastAPI, Docker |
 | Rollout | Canary at 25% → 50% → 100%, with an analysis step before each increase. Replica-based weights (4 replicas) keep it light on a laptop. | kind, Argo Rollouts |
 | Canary analysis | A Kubernetes Job replays the golden set against the canary and compares the results to the offline scores (**parity**), then checks error rate, p95 latency, and the flagged-rate delta against stable. A non-zero exit means Argo aborts and rolls back. | Python, Kubernetes Job |
 
@@ -106,10 +106,23 @@ What the event log showed:
 
 **Incident 3: silent canary**
 
-| Rollout | Parity max diff | Analysis result | Time to rollback |
-|---|---|---|---|
-| v2-bad (feature order bug) | _tbd_ | _tbd_ | _tbd_ |
-| v2.1 (manifest validation) | _tbd_ | _tbd_ | — |
+The v2-bad build swaps `payer_rate` and `payer_code_rate`, two features with similar ranges. On the real v2 model that moves the golden-set mean score from 12.25% to 11.88% and the flagged rate from 14.6% to 13.0%: nothing a dashboard would flag.
+
+Canary check against stable v1 (local run, two scorers on uvicorn):
+
+| Canary | Parity max diff | Error rate | p95 latency | Flagged-rate delta | Result |
+|---|---|---|---|---|---|
+| v2-bad (swapped features) | **0.1096** (limit 1e-6) | 0% | 14 ms | 1.5 pts (passes) | **fail → roll back** |
+| v2.1 (fixed) | **0** | 0% | 11 ms | 0.1 pts | pass → promote |
+
+Only parity catches it: the error, latency and business-metric checks all pass for the broken build.
+
+On kind with Argo Rollouts:
+
+| Rollout | Analysis result | Time to rollback |
+|---|---|---|
+| v2-bad | _tbd_ | _tbd_ |
+| v2.1 | _tbd_ | — |
 
 ---
 
@@ -125,14 +138,16 @@ make features       # as-of features for Aug–Dec -> data/features/
 make skew-bench     # incident 2: baseline vs AQE vs broadcast vs salting
 make train          # trains v1-flat, v1, v2; logs to MLflow; bundles in models/
 make mlflow-ui      # browse runs and the registry at http://localhost:5001
-make cluster        # creates the kind cluster and installs Argo Rollouts
+make images        # scorer images: v1, v2-bad, v2.1
+make cluster       # creates the kind cluster and installs Argo Rollouts
+make load-images   # copies the images into the cluster
 make deploy-v1      # stable baseline
 make rollout-v2-bad # incident 3: watch it roll back
 make rollout-v2.1   # fixed version promotes to 100%
 make clean
 ```
 
-Watch a rollout: `kubectl argo rollouts get rollout denial-scorer --watch`
+Watch a rollout with `make watch`, see which builds answer with `make traffic`, read the canary check with `make analysis-logs`, and remove everything with `make cluster-delete`.
 
 ---
 
@@ -147,7 +162,7 @@ claimshift/
 ├── training/           train.py, model_io.py, golden_set.py
 ├── serving/            app.py, features.py, Dockerfile
 ├── k8s/                kind-config.yaml, services.yaml
-├── rollout/            rollout.yaml, analysis-template.yaml, canary_check.py
+├── rollout/            rollout.yaml, analysis-template.yaml, canary_check.py, traffic.py
 ├── docs/results/       benchmark outputs committed as evidence (skew_bench.json)
 ├── docs/incidents/     INC-01-unseen-codes.md, INC-02-spark-skew.md, INC-03-silent-canary.md
 ├── tests/              unit tests + serving/offline parity test
@@ -183,15 +198,3 @@ claimshift/
 - Timings come from a laptop and show relative improvement, not production throughput.
 
 ---
-
-## Status
-
-- [x] Claims generator (real ICD-10-CM codes, simulated claims)
-- [x] Data contract + drift report
-- [x] Spark feature build + skew benchmark
-- [x] Training + MLflow + golden set
-- [ ] FastAPI serving image
-- [ ] kind + Argo Rollouts canary with analysis job
-- [ ] Incident postmortems
-- [ ] CI workflow
-- [ ] Blog post

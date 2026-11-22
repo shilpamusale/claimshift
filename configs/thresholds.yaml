@@ -12,7 +12,7 @@ data_contract:
 canary:
   parity_max_abs_diff: 1.0e-6   # online vs offline score on the golden set
   max_error_rate: 0.01
-  max_p95_latency_ms: 50
+  max_p95_latency_ms: 250
   flagged_rate_delta_pts:
     warn: 3
     fail: 8

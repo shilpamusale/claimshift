@@ -1,0 +1,66 @@
+# The denial scorer, deployed as an Argo Rollout instead of a Deployment.
+# A new image goes out as a canary: 1 of 4 pods (25%), checked, then 2 of 4 (50%),
+# checked, then everything. A failed check aborts the rollout and scales the
+# canary back to zero: the automatic rollback.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: denial-scorer
+spec:
+  replicas: 4
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: denial-scorer
+  template:
+    metadata:
+      labels:
+        app: denial-scorer
+    spec:
+      containers:
+        - name: scorer
+          image: claimshift-scorer:v1
+          imagePullPolicy: Never          # images are loaded into kind, never pulled
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:                 # no traffic until the model is loaded
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+  strategy:
+    canary:
+      stableService: denial-scorer-stable
+      canaryService: denial-scorer-canary
+      steps:
+        - setWeight: 25
+        - analysis:
+            templates:
+              - templateName: canary-check
+            args:
+              - name: canary-hash
+                valueFrom:
+                  podTemplateHashValue: Latest   # the canary ReplicaSet's hash
+        - setWeight: 50
+        - analysis:
+            templates:
+              - templateName: canary-check
+            args:
+              - name: canary-hash
+                valueFrom:
+                  podTemplateHashValue: Latest   # the canary ReplicaSet's hash
+        - setWeight: 100

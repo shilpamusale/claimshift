@@ -1,0 +1,12 @@
+.git
+.venv
+**/__pycache__
+.pytest_cache
+.ruff_cache
+data
+spark-events
+mlartifacts
+mlflow.db
+docs
+reference
+tests
