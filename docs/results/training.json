@@ -1,0 +1,197 @@
+{
+  "v1-flat": {
+    "version": "v1-flat",
+    "train_rows": 498407,
+    "fit_seconds": 2.3,
+    "mlflow_run_id": "cdf6f6301fec40a6aaa1ae32ed4908dc",
+    "registered_version": null,
+    "metrics": {
+      "pre": {
+        "rows": 815217,
+        "auc": 0.6943,
+        "pr_auc": 0.2562,
+        "brier": 0.0893,
+        "denial_rate": 0.1074,
+        "mean_score": 0.1074,
+        "flagged_rate": 0.094
+      },
+      "cutover": {
+        "rows": 842391,
+        "auc": 0.6846,
+        "pr_auc": 0.2574,
+        "brier": 0.0972,
+        "denial_rate": 0.1174,
+        "mean_score": 0.1069,
+        "flagged_rate": 0.089
+      },
+      "cutover_new_codes": {
+        "rows": 51220,
+        "auc": 0.5936,
+        "pr_auc": 0.3885,
+        "brier": 0.2301,
+        "denial_rate": 0.2874,
+        "mean_score": 0.1101,
+        "flagged_rate": 0.0556
+      },
+      "cutover_ob_tenants": {
+        "rows": 60270,
+        "auc": 0.6749,
+        "pr_auc": 0.2549,
+        "brier": 0.098,
+        "denial_rate": 0.1182,
+        "mean_score": 0.1109,
+        "flagged_rate": 0.0871
+      },
+      "post": {
+        "rows": 1657610,
+        "auc": 0.6972,
+        "pr_auc": 0.262,
+        "brier": 0.0922,
+        "denial_rate": 0.1115,
+        "mean_score": 0.1132,
+        "flagged_rate": 0.1113
+      },
+      "post_new_codes": {
+        "rows": 99732,
+        "auc": 0.64,
+        "pr_auc": 0.3282,
+        "brier": 0.1485,
+        "denial_rate": 0.1931,
+        "mean_score": 0.2043,
+        "flagged_rate": 0.428
+      },
+      "post_ob_tenants": {
+        "rows": 119892,
+        "auc": 0.7007,
+        "pr_auc": 0.2678,
+        "brier": 0.0874,
+        "denial_rate": 0.1054,
+        "mean_score": 0.1204,
+        "flagged_rate": 0.1262
+      },
+      "golden": {
+        "rows": 2000,
+        "mean_score": 0.1234,
+        "flagged_rate": 0.144
+      }
+    }
+  },
+  "v1": {
+    "version": "v1",
+    "train_rows": 498407,
+    "fit_seconds": 3.2,
+    "mlflow_run_id": "f9cb917038d243ac9197827edc348182",
+    "registered_version": "1",
+    "metrics": {
+      "pre": {
+        "rows": 815217,
+        "auc": 0.6911,
+        "pr_auc": 0.2545,
+        "brier": 0.0894,
+        "denial_rate": 0.1074,
+        "mean_score": 0.1057,
+        "flagged_rate": 0.0935
+      },
+      "cutover": {
+        "rows": 842391,
+        "auc": 0.6885,
+        "pr_auc": 0.262,
+        "brier": 0.097,
+        "denial_rate": 0.1174,
+        "mean_score": 0.1054,
+        "flagged_rate": 0.0918
+      },
+      "cutover_new_codes": {
+        "rows": 51220,
+        "auc": 0.6304,
+        "pr_auc": 0.4229,
+        "brier": 0.2232,
+        "denial_rate": 0.2874,
+        "mean_score": 0.1198,
+        "flagged_rate": 0.1114
+      },
+      "cutover_ob_tenants": {
+        "rows": 60270,
+        "auc": 0.6725,
+        "pr_auc": 0.2557,
+        "brier": 0.0981,
+        "denial_rate": 0.1182,
+        "mean_score": 0.108,
+        "flagged_rate": 0.0928
+      },
+      "post": {
+        "rows": 1657610,
+        "auc": 0.694,
+        "pr_auc": 0.2604,
+        "brier": 0.0923,
+        "denial_rate": 0.1115,
+        "mean_score": 0.1108,
+        "flagged_rate": 0.111
+      },
+      "post_new_codes": {
+        "rows": 99732,
+        "auc": 0.6451,
+        "pr_auc": 0.3327,
+        "brier": 0.1482,
+        "denial_rate": 0.1931,
+        "mean_score": 0.2057,
+        "flagged_rate": 0.4396
+      },
+      "post_ob_tenants": {
+        "rows": 119892,
+        "auc": 0.6973,
+        "pr_auc": 0.2658,
+        "brier": 0.0876,
+        "denial_rate": 0.1054,
+        "mean_score": 0.1175,
+        "flagged_rate": 0.1311
+      },
+      "golden": {
+        "rows": 2000,
+        "mean_score": 0.1213,
+        "flagged_rate": 0.145
+      }
+    }
+  },
+  "v2": {
+    "version": "v2",
+    "train_rows": 2069761,
+    "fit_seconds": 10.5,
+    "mlflow_run_id": "f1d2e6f7dc2746759ac3ea4662076d56",
+    "registered_version": "2",
+    "metrics": {
+      "post": {
+        "rows": 1657610,
+        "auc": 0.7143,
+        "pr_auc": 0.2781,
+        "brier": 0.0911,
+        "denial_rate": 0.1115,
+        "mean_score": 0.112,
+        "flagged_rate": 0.1191
+      },
+      "post_new_codes": {
+        "rows": 99732,
+        "auc": 0.6649,
+        "pr_auc": 0.3511,
+        "brier": 0.1459,
+        "denial_rate": 0.1931,
+        "mean_score": 0.2116,
+        "flagged_rate": 0.4569
+      },
+      "post_ob_tenants": {
+        "rows": 119892,
+        "auc": 0.7172,
+        "pr_auc": 0.2818,
+        "brier": 0.0862,
+        "denial_rate": 0.1054,
+        "mean_score": 0.1107,
+        "flagged_rate": 0.115
+      },
+      "golden": {
+        "rows": 2000,
+        "mean_score": 0.1225,
+        "flagged_rate": 0.146
+      }
+    }
+  }
+}

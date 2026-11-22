@@ -1,0 +1,50 @@
+model_name: denial-scorer
+experiment: claimshift-denials
+tracking_uri: sqlite:///mlflow.db     # relative to the repo root; artifacts go to mlartifacts/
+
+categorical_features: [payer_id, proc_category, icd_chapter]
+flag_threshold: 0.20                  # scores above this are flagged for review
+
+params:                               # HistGradientBoostingClassifier
+  max_iter: 300
+  learning_rate: 0.08
+  max_leaf_nodes: 31
+  l2_regularization: 1.0
+  early_stopping: true
+  validation_fraction: 0.1
+  random_state: 7
+
+evaluation:                           # each window is skipped for versions trained on it
+  pre: ["2026-09"]                    # before Oct 1: in-distribution check
+  cutover: ["2026-10"]                # first month on FY2027 codes: no new-code labels yet
+  post: ["2026-11", "2026-12"]        # features now include October's new-code labels
+  ob_tenants: [T04, T11]
+
+golden_set:
+  month: "2026-11"
+  size: 2000
+  new_code_claims: 300                # make sure scoring bugs on new codes can't hide
+  ob_tenant_claims: 200
+  seed: 7
+
+versions:
+  v1-flat:
+    note: "Oct 1 model without the code hierarchy: unseen codes get the global rate"
+    train_months: ["2026-08"]
+    label_cutoff: "2026-10-01"
+    exclude_features: [code_rate, code_level, payer_code_rate]
+    register: false
+  v1:
+    note: "Oct 1 model with hierarchical code rates (the incident 1 fix)"
+    train_months: ["2026-08"]
+    label_cutoff: "2026-10-01"
+    exclude_features: [code_rate_flat]
+    register: true
+    alias: champion
+  v2:
+    note: "Retrained Dec 1 after the drift alert, with October's new-code labels"
+    train_months: ["2026-08", "2026-09", "2026-10"]
+    label_cutoff: "2026-12-01"
+    exclude_features: [code_rate_flat]
+    register: true
+    alias: challenger

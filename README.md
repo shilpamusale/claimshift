@@ -31,7 +31,7 @@ This repo simulates that day end to end on a laptop and works through the three 
 | Data generator | **Real ICD-10-CM codes** from the CMS FY2026 and FY2027 files, including the actual Oct 1 changes (190 new, 30 deleted). 50 tenants with Zipf-distributed volume (top 3 ≈ 57% of claims), including two women's-and-children's tenants where the obstetric changes land; 8 payers; Jul–Dec claims. Denial labels come from payer rules, including **payer edit lag**: payers deny more of the new codes in October. | Python, PyArrow |
 | Data contract | Checks schema and nulls, unseen-code rate per tenant, and PSI on ICD chapter distribution. Writes `drift_report.json`; a breach triggers a retrain. | PySpark |
 | Feature build | Claim-level features; code denial rates smoothed up the ICD hierarchy (code → category → chapter, the incident 1 fix); payer and payer×code rates; a tenant profile. Everything is computed **as of the month start** from labels already received, so training never sees the future. The tenant join is where incident 2 lives. | PySpark |
-| Training | Gradient-boosted classifier. Every model ships with a **feature manifest** (ordered names and types) and **golden-set scores** (offline predictions on 2,000 fixed claims). | scikit-learn `HistGradientBoostingClassifier`, MLflow |
+| Training | Gradient-boosted classifier trained on **point-in-time labels** (only denials known by the training date). Every model ships as a bundle: the model, a **feature manifest** (ordered names and categorical encodings) and **golden-set scores** (offline predictions on 2,000 fixed claims). MLflow records every run; v1 and v2 are registered as `champion` and `challenger`. | scikit-learn `HistGradientBoostingClassifier`, MLflow (SQLite) |
 | Serving | `/predict`, `/health`, `/metrics`. The readiness probe waits for the model to load. | FastAPI, Docker |
 | Rollout | Canary at 25% → 50% → 100%, with an analysis step before each increase. Replica-based weights (4 replicas) keep it light on a laptop. | kind, Argo Rollouts |
 | Canary analysis | A Kubernetes Job replays the golden set against the canary and compares the results to the offline scores (**parity**), then checks error rate, p95 latency, and the flagged-rate delta against stable. A non-zero exit means Argo aborts and rolls back. | Python, Kubernetes Job |
@@ -72,11 +72,19 @@ Detection (data contract, 5M rows; `data/reports/drift_report_YYYY-MM.json`):
 The chapter PSI stays flat because the new codes stay in the same chapters. A coarse distribution check misses this drift, and only the code-level check catches it. The top unseen codes are the new FY2027 ectopic pregnancy codes (O00.512, O00.31, O00.131).
 
 
-| Model | AUC Jul–Sep | AUC Oct–Nov | Unseen-code rate (Oct) |
-|---|---|---|---|
-| v1 (no backoff) | _tbd_ | _tbd_ | _tbd_ |
-| v1 + hierarchical backoff | _tbd_ | _tbd_ | _tbd_ |
-| v2 (retrained) | _tbd_ | _tbd_ | _tbd_ |
+Impact on the model (`make train`; `docs/results/training.json`):
+
+| Model | Trained on | Sep AUC | Oct AUC | Oct new-code AUC | Oct new-code predicted / actual denial rate | Nov–Dec AUC | Nov–Dec new-code AUC |
+|---|---|---|---|---|---|---|---|
+| v1-flat (no hierarchy) | Aug claims, labels by Oct 1 (498k) | 0.6943 | 0.6846 | 0.5936 | **11.0% / 28.7%** | 0.6972 | 0.6400 |
+| v1 (hierarchical code rates) | same | 0.6911 | 0.6885 | **0.6304** | **12.0% / 28.7%** | 0.6940 | 0.6451 |
+| v2 (retrained Dec 1) | Aug–Oct claims, labels by Dec 1 (2.07M) | — | — | — | — | **0.7143** | **0.6649** |
+
+What it shows:
+- **The silent failure:** in October, claims with new codes were denied at 28.7% (payer edit lag), while the model predicted 11–12%, a 2.4× gap. Nothing errored.
+- **The hierarchy helps ranking but not the level.** Falling back to the code's category lifts new-code AUC from 0.594 to 0.630, but no fallback can know payers are rejecting the new codes. Only fresh labels can.
+- **Monthly feature refresh closes the gap by November** (20.6% predicted vs 19.3% actual for v1), because the code-rate features now include October's results. The retrained v2 adds about +0.02 AUC, partly from 4× more training data.
+- **Lesson:** the drift alert's job is the first weeks after Oct 1. Detect fast, retrain on the first labels, and watch calibration on new-code claims, not just overall AUC.
 
 **Incident 2: Spark skew** (5M rows)
 
@@ -115,7 +123,8 @@ make data           # generate claims (ROWS=5000000; use ROWS=500000 for a quick
 make contract-demo  # data contract: Sep passes, Oct triggers a retrain
 make features       # as-of features for Aug–Dec -> data/features/
 make skew-bench     # incident 2: baseline vs AQE vs broadcast vs salting
-make train          # trains a model, logs it to MLflow with manifest + golden scores
+make train          # trains v1-flat, v1, v2; logs to MLflow; bundles in models/
+make mlflow-ui      # browse runs and the registry at http://localhost:5001
 make cluster        # creates the kind cluster and installs Argo Rollouts
 make deploy-v1      # stable baseline
 make rollout-v2-bad # incident 3: watch it roll back
@@ -135,7 +144,7 @@ claimshift/
 ├── reference/cms/      official ICD-10-CM code files, FY2026 and FY2027
 ├── data_gen/           generate_claims.py, code_sets.py
 ├── pipeline/           contracts.py, features.py, skew_bench.py, run_pipeline.py
-├── training/           train.py, golden_set.py
+├── training/           train.py, model_io.py, golden_set.py
 ├── serving/            app.py, features.py, Dockerfile
 ├── k8s/                kind-config.yaml, services.yaml
 ├── rollout/            rollout.yaml, analysis-template.yaml, canary_check.py
@@ -155,7 +164,7 @@ claimshift/
 | PySpark `local[4]` | Spark on EMR or Databricks |
 | Parquet on disk | S3 with Iceberg or Delta tables |
 | Makefile | Airflow or Step Functions |
-| MLflow file store | MLflow tracking server or SageMaker Model Registry |
+| MLflow on SQLite | MLflow tracking server (Postgres + S3) or SageMaker Model Registry |
 | kind, single node | EKS, multi-AZ |
 | Argo Rollouts, replica weights | Argo Rollouts with ALB or service-mesh weighted routing |
 | Analysis Job | Same, plus Prometheus or CloudWatch metrics and alarms |
@@ -173,4 +182,16 @@ claimshift/
 - A single-node cluster can't show node failures or network partitions.
 - Timings come from a laptop and show relative improvement, not production throughput.
 
+---
 
+## Status
+
+- [x] Claims generator (real ICD-10-CM codes, simulated claims)
+- [x] Data contract + drift report
+- [x] Spark feature build + skew benchmark
+- [x] Training + MLflow + golden set
+- [ ] FastAPI serving image
+- [ ] kind + Argo Rollouts canary with analysis job
+- [ ] Incident postmortems
+- [ ] CI workflow
+- [ ] Blog post

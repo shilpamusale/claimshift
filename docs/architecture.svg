@@ -100,7 +100,7 @@
     <text x="758" y="346" font-size="15" font-weight="600" fill="#0F172A">Trainer</text>
     <text x="758" y="370" font-size="12.5" fill="#475569">HistGradientBoosting</text>
     <text x="758" y="390" font-size="12.5" fill="#475569">Hierarchical code backoff</text>
-    <text x="758" y="410" font-size="12.5" fill="#475569">Time-based validation split</text>
+    <text x="758" y="410" font-size="12.5" fill="#475569">Point-in-time labels</text>
   </g>
   <line x1="868" y1="428" x2="868" y2="454" stroke="#64748B" stroke-width="1.6" marker-end="url(#a)"/>
   <g>

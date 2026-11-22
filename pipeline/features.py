@@ -35,7 +35,9 @@ SMOOTHING = 20.0  # pseudo-claims pulling small groups toward their parent rate
 SALT_BUCKETS = 16
 
 ID_COLUMNS = ["claim_id", "tenant_id", "payer_id", "service_month", "icd_code", "icd_category",
-              "icd_chapter", "code_set_version", "proc_category"]
+              "icd_chapter", "code_set_version", "proc_category",
+              "remit_date"]  # when the label became known; training uses it for point-in-time cutoffs
+
 NUMERIC_FEATURES = [
     "log_billed", "days_to_submit", "pa_required", "pa_missing",
     "code_rate", "code_rate_flat", "code_support", "code_level",

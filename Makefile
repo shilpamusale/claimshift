@@ -4,7 +4,7 @@ ROWS ?= 5000000
 SEED ?= 7
 MONTH ?= 2026-10
 
-.PHONY: setup data data-small contract contract-demo features skew-bench test lint clean
+.PHONY: setup data data-small contract contract-demo features skew-bench train mlflow-ui test lint clean
 
 setup:
 	$(PYTHON) -m venv .venv
@@ -30,6 +30,12 @@ features:                ## as-of features for every month after the first
 skew-bench:              ## incident 2: baseline vs AQE vs broadcast vs salting
 	$(PY) -m pipeline.run_pipeline skew-bench --month $(MONTH)
 
+train:                   ## train v1-flat, v1, v2; log to MLflow; write bundles to models/
+	$(PY) -m training.train --all
+
+mlflow-ui:               ## browse runs at http://localhost:5001 (5000 is taken by AirPlay on macOS)
+	.venv/bin/mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5001
+
 test:
 	$(PY) -m pytest -q
 
@@ -37,4 +43,4 @@ lint:
 	$(PY) -m ruff check .
 
 clean:
-	rm -rf data mlruns spark-events
+	rm -rf data mlruns spark-events models mlartifacts mlflow.db
