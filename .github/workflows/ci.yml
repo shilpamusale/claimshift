@@ -1,0 +1,93 @@
+# Runs on every push to main and every pull request.
+#   test            lint + all unit and Spark tests
+#   serving-parity  build a small dataset, train v2, build the real serving image,
+#                   and run the golden-set parity gate against the running container.
+#                   It must pass the fixed build and reject the known-bad build
+#                   (INC-03 action item: catch serving bugs before they reach a cluster).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-java@v4      # Spark needs Java 17+
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Lint
+        run: ruff check .
+      - name: Tests
+        run: pytest -q
+
+  serving-parity:
+    name: Golden-set parity on the serving image
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Small dataset, features, and the v2 model
+        run: |
+          python -m data_gen.generate_claims --rows 500000 --out data
+          python -m pipeline.run_pipeline features
+          python -m training.train --version v2
+
+      - name: Build serving images (fixed and known-bad)
+        run: |
+          SKLEARN_VERSION=$(python -c "import sklearn; print(sklearn.__version__)")
+          docker build -f serving/Dockerfile --build-arg SKLEARN_VERSION="$SKLEARN_VERSION" \
+            --build-arg BUNDLE=v2 --build-arg BUILD=ci-good -t claimshift-scorer:ci-good .
+          docker build -f serving/Dockerfile --build-arg SKLEARN_VERSION="$SKLEARN_VERSION" \
+            --build-arg BUNDLE=v2 --build-arg BUILD=ci-bad --build-arg FEATURE_ORDER=hardcoded \
+            -t claimshift-scorer:ci-bad .
+
+      - name: Start both containers
+        run: |
+          docker run -d --name good -p 8081:8080 claimshift-scorer:ci-good
+          docker run -d --name bad -p 8082:8080 claimshift-scorer:ci-bad
+
+      - name: Parity gate passes the fixed build
+        run: python -m rollout.canary_check --canary http://localhost:8081 --stable http://localhost:8081
+
+      - name: Parity gate rejects the known-bad build
+        run: |
+          if python -m rollout.canary_check --canary http://localhost:8082 --stable http://localhost:8082; then
+            echo "::error::the parity gate passed a build with swapped features"
+            exit 1
+          fi
+          echo "Known-bad build rejected, as expected."
+
+      - name: Container logs
+        if: failure()
+        run: |
+          docker logs good || true
+          docker logs bad || true
