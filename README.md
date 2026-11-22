@@ -34,7 +34,7 @@ This repo simulates that day end to end on a laptop and works through the three 
 | Training | Gradient-boosted classifier trained on **point-in-time labels** (only denials known by the training date). Every model ships as a bundle: the model, a **feature manifest** (ordered names and categorical encodings) and **golden-set scores** (offline predictions on 2,000 fixed claims). MLflow records every run; v1 and v2 are registered as `champion` and `challenger`. | scikit-learn `HistGradientBoostingClassifier`, MLflow (SQLite) |
 | Serving | `/predict`, `/health`, `/ready`, `/model-info`, `/golden`, `/metrics`. The readiness probe waits for the model to load, and the server refuses to start if its scikit-learn version differs from training. `FEATURE_ORDER=hardcoded` reproduces the incident 3 bug. | FastAPI, Docker |
 | Rollout | Canary at 25% → 50% → 100%, with an analysis step before each increase. Replica-based weights (4 replicas) keep it light on a laptop. | kind, Argo Rollouts |
-| Canary analysis | A Kubernetes Job replays the golden set against the canary and compares the results to the offline scores (**parity**), then checks error rate, p95 latency, and the flagged-rate delta against stable. A non-zero exit means Argo aborts and rolls back. | Python, Kubernetes Job |
+| Canary analysis | A Kubernetes Job first confirms it is talking to canary pods (**routing guard**), then replays the golden set against the canary and compares the results to the offline scores (**parity**), then checks error rate, p95 latency, and the flagged-rate delta against stable. A non-zero exit means Argo aborts and rolls back. | Python, Kubernetes Job |
 
 ### Why a golden-set parity check?
 
@@ -117,12 +117,20 @@ Canary check against stable v1 (local run, two scorers on uvicorn):
 
 Only parity catches it: the error, latency and business-metric checks all pass for the broken build.
 
-On kind with Argo Rollouts:
+On kind with Argo Rollouts, the first run found a bug **in the canary check itself**:
 
-| Rollout | Analysis result | Time to rollback |
+- **The v2-bad check at 25% passed.** Argo starts the analysis as soon as the canary pod is ready, a moment before the `denial-scorer-canary` Service's endpoints switch to it. The check scored stable v1 pods, found a perfect match, and passed. The 50% check caught v2-bad and rolled it back 19 seconds after the deploy, but a broken build had cleared its first gate.
+- **v2.1 then failed falsely:** its golden set came from a v1 pod and some scores from v2.1 pods.
+- **Fix: a routing guard.** Every response now carries its pod name, which contains the pod-template hash. Argo passes the canary's hash to the check (`podTemplateHashValue: Latest`). The check waits until only canary pods answer and fails on any response from another pod.
+
+| Rollout (after the fix) | Canary check | Outcome |
 |---|---|---|
-| v2-bad | _tbd_ | _tbd_ |
-| v2.1 | _tbd_ | — |
+| v2-bad | Answered by canary pod `denial-scorer-998dcb66-…`, 0 misrouted; **parity 0.1096 → fail**; errors 0%, p95 32 ms, flagged-rate delta 1.5 pts (all pass) | **Rolled back automatically, 12.9 s after the deploy** |
+| v2.1 | Passed at 25% and 50% | **Promoted to 100% in 27.7 s**; `make traffic`: v2.1 answered 200/200 |
+
+![Argo Rollouts on kind: v2-bad is caught by the canary check and rolled back; v2.1 passes both checks and is promoted](docs/canary.gif)
+
+*Recorded with `make watch`: v1 stable → v2-bad canary at 25% → AnalysisRun fails → rolled back → v2.1 canary → both checks pass → 100%.*
 
 ---
 
@@ -163,7 +171,8 @@ claimshift/
 ├── serving/            app.py, features.py, Dockerfile
 ├── k8s/                kind-config.yaml, services.yaml
 ├── rollout/            rollout.yaml, analysis-template.yaml, canary_check.py, traffic.py
-├── docs/results/       benchmark outputs committed as evidence (skew_bench.json)
+├── docs/results/       benchmark outputs committed as evidence (skew_bench.json, training.json)
+├── docs/canary.gif    recording of the canary rollouts on kind
 ├── docs/incidents/     INC-01-unseen-codes.md, INC-02-spark-skew.md, INC-03-silent-canary.md
 ├── tests/              unit tests + serving/offline parity test
 ├── .github/workflows/  ci.yml (lint, tests, 100k-row pipeline run, parity test)
