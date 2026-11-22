@@ -20,6 +20,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
+
 @dataclass
 class Manifest:
     model_name: str

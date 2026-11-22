@@ -1,5 +1,7 @@
 # claimshift
 
+[![CI](https://github.com/shilpamusale/claimshift/actions/workflows/ci.yml/badge.svg)](https://github.com/shilpamusale/claimshift/actions/workflows/ci.yml)
+
 ### The October 1 Problem
 
 **Keeping a claims-denial model healthy through the annual ICD-10 code update: drift detection, Spark skew, and a canary rollout that catches a silent failure.**
@@ -175,7 +177,7 @@ claimshift/
 ├── docs/canary.gif    recording of the canary rollouts on kind
 ├── docs/incidents/     INC-01-unseen-codes.md, INC-02-spark-skew.md, INC-03-silent-canary.md
 ├── tests/              unit tests + serving/offline parity test
-├── .github/workflows/  ci.yml (lint, tests, 100k-row pipeline run, parity test)
+├── .github/workflows/  ci.yml (lint, 33 tests, 500k-row pipeline, parity gate on the serving image)
 └── Makefile
 ```
 
@@ -207,3 +209,4 @@ claimshift/
 - Timings come from a laptop and show relative improvement, not production throughput.
 
 ---
+
